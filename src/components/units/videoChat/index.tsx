@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMediaStream } from "../../commons/hooks/customs/useMediaStream";
+import { useMediaStream } from "../../commons/hooks/customs/useMediaRequest";
 import * as S from "./styles";
 
 export default function VideoChat(): JSX.Element {
