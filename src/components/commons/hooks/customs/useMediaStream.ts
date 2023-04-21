@@ -22,7 +22,7 @@ export const useMediaStream = (): IUseMediaRequestReturnType => {
   const constraints: IMediaStreamConstraints = { audio: true, video: true };
 
   useEffect(() => {
-    const newSocket = io("http://10.34.233.97:4000/", {
+    const newSocket = io("http://10.34.233.86:4000/", {
       path: "/chat/socket.io",
       transports: ["websocket"],
     });
@@ -32,15 +32,13 @@ export const useMediaStream = (): IUseMediaRequestReturnType => {
     };
   }, []);
 
-  useEffect(() => {
-    pcRef.current = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: "stun:stun.l.google.com:19302",
-        },
-      ],
-    });
-  }, []);
+  pcRef.current = new RTCPeerConnection({
+    iceServers: [
+      {
+        urls: "stun:stun.l.google.com:19302",
+      },
+    ],
+  });
 
   const getUserMedia = async (): Promise<void> => {
     try {
@@ -49,21 +47,32 @@ export const useMediaStream = (): IUseMediaRequestReturnType => {
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
       }
-      if (pcRef.current) {
-        stream.getTracks().forEach((track) => {
-          if (!pcRef.current) {
+      if (!(pcRef.current && socket)) {
+        return;
+      }
+      stream.getTracks().forEach((track) => {
+        if (!pcRef.current) {
+          return;
+        }
+        pcRef.current.addTrack(track, stream);
+      });
+
+      pcRef.current.onicecandidate = (e) => {
+        if (e.candidate) {
+          if (!socket) {
             return;
           }
-          pcRef.current.addTrack(track, stream);
-        });
+          console.log("recv candidate");
+          socket.emit("candidate", e.candidate, roomId);
+        }
+      };
 
-        pcRef.current.onicecandidate = (e) => {
-          if (e.candidate && socket) {
-            socket.emit("candidate", e.candidate, roomId);
-          }
-        };
-      }
-      void createOffer();
+      pcRef.current.ontrack = (e) => {
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = e.streams[0];
+        }
+      };
+      await createOffer();
     } catch (e) {
       console.error(e);
     }
@@ -73,13 +82,18 @@ export const useMediaStream = (): IUseMediaRequestReturnType => {
     if (!pcRef.current) {
       return;
     }
-    const offer = await pcRef.current.createOffer();
-    console.log(offer, "OFFer");
-    await pcRef.current.setLocalDescription(offer);
 
-    socket?.emit("offer", offer.sdp);
+    try {
+      const offer = await pcRef.current.createOffer();
+      console.log(offer, "OFFer");
+      await pcRef.current.setLocalDescription(offer);
 
-    await getOffer();
+      socket?.emit("offer", offer.sdp);
+
+      await getOffer();
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   const getOffer = async (): Promise<void> => {
@@ -89,9 +103,11 @@ export const useMediaStream = (): IUseMediaRequestReturnType => {
           return;
         }
         await pcRef.current.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp }));
-        await createAnswer();
+        if (pcRef.current.signalingState === "have-remote-offer") {
+          await createAnswer();
+        }
       } catch (error) {
-        console.error("Error setting remote description:", error);
+        console.error(error);
       }
     });
   };
@@ -101,13 +117,14 @@ export const useMediaStream = (): IUseMediaRequestReturnType => {
       return;
     }
 
-    const currentState = pcRef.current.signalingState;
-    if (currentState !== "stable") {
+    if (pcRef.current.signalingState !== "have-remote-offer") {
       return;
     }
 
     const answer = await pcRef.current.createAnswer();
+    console.log(answer, "ANSWER!!");
     await pcRef.current.setLocalDescription(answer);
+
     socket?.emit("answer", answer.sdp);
 
     await getAnswer();
@@ -124,7 +141,7 @@ export const useMediaStream = (): IUseMediaRequestReturnType => {
         );
         await getCandidate();
       } catch (error) {
-        console.error("Error setting remote description:", error);
+        console.error(error);
       }
     });
   };
@@ -141,14 +158,7 @@ export const useMediaStream = (): IUseMediaRequestReturnType => {
   };
 
   void getUserMedia();
-
-  if (pcRef.current) {
-    pcRef.current.ontrack = (e) => {
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = e.streams[0];
-      }
-    };
-  }
   console.log(pcRef);
+
   return { localVideoRef, remoteVideoRef };
 };
